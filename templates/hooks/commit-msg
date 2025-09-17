@@ -1,0 +1,134 @@
+#!/bin/sh
+#
+# Commit message hook that enforces conventional commit format
+# Copy this file to .git/hooks/commit-msg and make it executable
+#
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+print_error() {
+    echo -e "${RED}❌ $1${NC}"
+}
+
+print_success() {
+    echo -e "${GREEN}✅ $1${NC}"
+}
+
+print_info() {
+    echo -e "${YELLOW}ℹ️  $1${NC}"
+}
+
+commit_file="$1"
+commit_msg=$(cat "$commit_file")
+
+# Skip merge commits
+if echo "$commit_msg" | grep -q "^Merge "; then
+    print_info "Merge commit detected, skipping validation"
+    exit 0
+fi
+
+# Skip revert commits
+if echo "$commit_msg" | grep -q "^Revert "; then
+    print_info "Revert commit detected, skipping validation"
+    exit 0
+fi
+
+# Conventional commit pattern
+# Format: type(scope): description
+# Examples:
+# feat: add new feature
+# fix(auth): resolve login issue
+# docs(readme): update installation guide
+
+commit_pattern='^(feat|fix|docs|style|refactor|test|chore|perf|ci|build|revert)(\(.+\))?: .{1,50}'
+
+if ! echo "$commit_msg" | grep -qE "$commit_pattern"; then
+    print_error "Invalid commit message format!"
+    echo
+    echo "Commit message should follow conventional commit format:"
+    echo "  type(scope): description"
+    echo
+    echo "Valid types:"
+    echo "  feat:     New feature"
+    echo "  fix:      Bug fix"
+    echo "  docs:     Documentation changes"
+    echo "  style:    Code style changes (formatting, etc.)"
+    echo "  refactor: Code refactoring"
+    echo "  test:     Adding or updating tests"
+    echo "  chore:    Maintenance tasks"
+    echo "  perf:     Performance improvements"
+    echo "  ci:       CI/CD changes"
+    echo "  build:    Build system changes"
+    echo "  revert:   Revert previous commit"
+    echo
+    echo "Examples:"
+    echo "  feat: add user authentication"
+    echo "  fix(api): resolve CORS issue"
+    echo "  docs(readme): update installation guide"
+    echo "  style: format code with prettier"
+    echo "  refactor(auth): extract validation logic"
+    echo "  test: add unit tests for user service"
+    echo "  chore: update dependencies"
+    echo
+    echo "Your commit message:"
+    echo "  $commit_msg"
+    exit 1
+fi
+
+# Check message length
+first_line=$(echo "$commit_msg" | head -n1)
+if [ ${#first_line} -gt 72 ]; then
+    print_error "Commit message first line is too long (${#first_line} chars, max 72)"
+    echo "Please keep the first line under 72 characters"
+    exit 1
+fi
+
+# Check for proper capitalization (description should be lowercase)
+description=$(echo "$first_line" | sed 's/^[^:]*: *//')
+if echo "$description" | grep -q '^[A-Z]'; then
+    print_error "Commit description should start with lowercase letter"
+    echo "Current: $description"
+    echo "Should be: $(echo "$description" | sed 's/^./\L&/')"
+    exit 1
+fi
+
+# Check for trailing period
+if echo "$first_line" | grep -q '\.$'; then
+    print_error "Commit message should not end with a period"
+    echo "Remove the trailing period from: $first_line"
+    exit 1
+fi
+
+# Check for empty description
+if echo "$first_line" | grep -qE '^[^:]+(\([^)]+\))?: *$'; then
+    print_error "Commit description cannot be empty"
+    exit 1
+fi
+
+# Warn about imperative mood (common mistakes)
+description_lower=$(echo "$description" | tr '[:upper:]' '[:lower:]')
+case "$description_lower" in
+    "added "*|"adding "*|"adds "*)
+        print_error "Use imperative mood: 'add' instead of 'added/adding/adds'"
+        exit 1
+        ;;
+    "fixed "*|"fixing "*|"fixes "*)
+        print_error "Use imperative mood: 'fix' instead of 'fixed/fixing/fixes'"
+        exit 1
+        ;;
+    "updated "*|"updating "*|"updates "*)
+        print_error "Use imperative mood: 'update' instead of 'updated/updating/updates'"
+        exit 1
+        ;;
+    "removed "*|"removing "*|"removes "*)
+        print_error "Use imperative mood: 'remove' instead of 'removed/removing/removes'"
+        exit 1
+        ;;
+esac
+
+print_success "Commit message format is valid!"
+exit 0

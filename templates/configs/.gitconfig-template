@@ -1,0 +1,161 @@
+# Git Configuration Template
+# Copy relevant sections to your ~/.gitconfig file
+
+[user]
+    name = Your Name
+    email = your.email@example.com
+
+[core]
+    editor = code --wait  # VS Code, change to your preferred editor
+    autocrlf = input      # Use 'true' on Windows, 'input' on Mac/Linux
+    excludesfile = ~/.gitignore_global
+    preloadindex = true
+    fscache = true
+
+[init]
+    defaultBranch = main
+
+[push]
+    default = simple
+    followTags = true
+
+[pull]
+    rebase = false  # Set to true if you prefer rebase over merge
+
+[merge]
+    tool = vimdiff  # Change to your preferred merge tool
+    conflictstyle = diff3
+
+[diff]
+    algorithm = patience
+    colorMoved = default
+
+[rebase]
+    autoStash = true
+    autoSquash = true
+
+[rerere]
+    enabled = true
+
+[gc]
+    auto = 256
+
+[color]
+    ui = auto
+    branch = auto
+    diff = auto
+    status = auto
+
+[color "branch"]
+    current = yellow reverse
+    local = yellow
+    remote = green
+
+[color "diff"]
+    meta = yellow bold
+    frag = magenta bold
+    old = red bold
+    new = green bold
+
+[color "status"]
+    added = yellow
+    changed = green
+    untracked = cyan
+
+# Useful aliases
+[alias]
+    # Basic shortcuts
+    st = status
+    co = checkout
+    br = branch
+    ci = commit
+    unstage = reset HEAD --
+
+    # Advanced aliases
+    lg = log --oneline --graph --all
+    last = log -1 HEAD
+    visual = !gitk
+    pushf = push --force-with-lease
+    amend = commit --amend --no-edit
+    wip = commit -am "WIP: work in progress"
+    undo = reset --soft HEAD~1
+    
+    # Branch management
+    cleanup = "!git branch --merged | grep -v '\\*\\|main\\|develop' | xargs -n 1 git branch -d"
+    recent = branch --sort=-committerdate
+    
+    # Log aliases
+    hist = log --pretty=format:'%h %ad | %s%d [%an]' --graph --date=short
+    type = cat-file -t
+    dump = cat-file -p
+    
+    # Diff aliases
+    changes = diff --name-status
+    diffstat = diff --stat
+    
+    # Stash aliases
+    save = stash push -m
+    pop = stash pop
+    
+    # Remote aliases
+    remotes = remote -v
+    
+    # Find aliases
+    find = "!git ls-files | grep -i"
+    grep = grep -Ii
+    
+    # Assume unchanged (ignore local changes)
+    assume = update-index --assume-unchanged
+    unassume = update-index --no-assume-unchanged
+    assumed = "!git ls-files -v | grep ^h | cut -c 3-"
+    
+    # Show ignored files
+    ignored = ls-files --others --ignored --exclude-standard
+
+# URL shortcuts for common Git hosting services
+[url "git@github.com:"]
+    insteadOf = gh:
+    pushInsteadOf = github:
+    pushInsteadOf = git://github.com/
+
+[url "git@gitlab.com:"]
+    insteadOf = gl:
+    pushInsteadOf = gitlab:
+    pushInsteadOf = git://gitlab.com/
+
+[url "git@bitbucket.org:"]
+    insteadOf = bb:
+    pushInsteadOf = bitbucket:
+    pushInsteadOf = git://bitbucket.org/
+
+# Credential helpers (uncomment and configure as needed)
+# [credential]
+#     helper = store  # Simple credential storage
+#     helper = cache --timeout=3600  # Cache credentials for 1 hour
+
+# For Windows users
+# [credential]
+#     helper = manager-core
+
+# For macOS users
+# [credential]
+#     helper = osxkeychain
+
+# GPG signing (uncomment if you use GPG signing)
+# [commit]
+#     gpgsign = true
+# [user]
+#     signingkey = YOUR_GPG_KEY_ID
+
+# Delta (better diff viewer) - uncomment if you have delta installed
+# [core]
+#     pager = delta
+# [interactive]
+#     diffFilter = delta --color-only
+# [delta]
+#     navigate = true
+#     light = false
+# [merge]
+#     conflictstyle = diff3
+# [diff]
+#     colorMoved = default
