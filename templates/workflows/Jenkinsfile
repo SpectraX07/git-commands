@@ -1,0 +1,569 @@
+// Jenkins Pipeline Template
+// Copy this to Jenkinsfile in your repository root
+
+pipeline {
+    agent any
+    
+    // Environment variables
+    environment {
+        NODE_VERSION = '18'
+        PYTHON_VERSION = '3.9'
+        DOCKER_REGISTRY = 'your-registry.com'
+        APP_NAME = 'your-app-name'
+        SLACK_CHANNEL = '#deployments'
+    }
+    
+    // Build parameters
+    parameters {
+        choice(
+            name: 'ENVIRONMENT',
+            choices: ['staging', 'production'],
+            description: 'Target environment for deployment'
+        )
+        booleanParam(
+            name: 'SKIP_TESTS',
+            defaultValue: false,
+            description: 'Skip running tests'
+        )
+        booleanParam(
+            name: 'FORCE_DEPLOY',
+            defaultValue: false,
+            description: 'Force deployment even if tests fail'
+        )
+    }
+    
+    // Pipeline options
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timeout(time: 60, unit: 'MINUTES')
+        retry(3)
+        skipStagesAfterUnstable()
+    }
+    
+    // Build triggers
+    triggers {
+        // Poll SCM every 5 minutes
+        pollSCM('H/5 * * * *')
+        // Build daily at 2 AM
+        cron('0 2 * * *')
+    }
+    
+    stages {
+        // Stage 1: Checkout and Setup
+        stage('Checkout') {
+            steps {
+                script {
+                    echo "🔄 Checking out code..."
+                    checkout scm
+                    
+                    // Get commit information
+                    env.GIT_COMMIT_SHORT = sh(
+                        script: 'git rev-parse --short HEAD',
+                        returnStdout: true
+                    ).trim()
+                    
+                    env.GIT_BRANCH_NAME = sh(
+                        script: 'git rev-parse --abbrev-ref HEAD',
+                        returnStdout: true
+                    ).trim()
+                    
+                    echo "Branch: ${env.GIT_BRANCH_NAME}"
+                    echo "Commit: ${env.GIT_COMMIT_SHORT}"
+                }
+            }
+        }
+        
+        // Stage 2: Environment Setup
+        stage('Setup Environment') {
+            parallel {
+                stage('Setup Node.js') {
+                    when {
+                        expression { fileExists('package.json') }
+                    }
+                    steps {
+                        script {
+                            echo "📦 Setting up Node.js environment..."
+                            sh """
+                                # Install Node.js using nvm
+                                curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
+                                export NVM_DIR="\$HOME/.nvm"
+                                [ -s "\$NVM_DIR/nvm.sh" ] && . "\$NVM_DIR/nvm.sh"
+                                nvm install ${NODE_VERSION}
+                                nvm use ${NODE_VERSION}
+                                
+                                # Install dependencies
+                                npm ci --prefer-offline --no-audit
+                            """
+                        }
+                    }
+                }
+                
+                stage('Setup Python') {
+                    when {
+                        anyOf {
+                            expression { fileExists('requirements.txt') }
+                            expression { fileExists('pyproject.toml') }
+                        }
+                    }
+                    steps {
+                        script {
+                            echo "🐍 Setting up Python environment..."
+                            sh """
+                                # Setup Python virtual environment
+                                python${PYTHON_VERSION} -m venv venv
+                                . venv/bin/activate
+                                
+                                # Upgrade pip and install dependencies
+                                pip install --upgrade pip
+                                if [ -f requirements.txt ]; then
+                                    pip install -r requirements.txt
+                                fi
+                                if [ -f requirements-dev.txt ]; then
+                                    pip install -r requirements-dev.txt
+                                fi
+                            """
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Stage 3: Code Quality
+        stage('Code Quality') {
+            parallel {
+                stage('Lint JavaScript') {
+                    when {
+                        expression { fileExists('package.json') }
+                    }
+                    steps {
+                        script {
+                            echo "🔍 Running JavaScript linting..."
+                            sh """
+                                export NVM_DIR="\$HOME/.nvm"
+                                [ -s "\$NVM_DIR/nvm.sh" ] && . "\$NVM_DIR/nvm.sh"
+                                nvm use ${NODE_VERSION}
+                                
+                                # Run ESLint
+                                npm run lint || true
+                                
+                                # Run Prettier check
+                                npm run format:check || true
+                            """
+                        }
+                    }
+                    post {
+                        always {
+                            publishHTML([
+                                allowMissing: false,
+                                alwaysLinkToLastBuild: true,
+                                keepAll: true,
+                                reportDir: 'lint-results',
+                                reportFiles: 'index.html',
+                                reportName: 'ESLint Report'
+                            ])
+                        }
+                    }
+                }
+                
+                stage('Lint Python') {
+                    when {
+                        expression { 
+                            sh(script: 'find . -name "*.py" | head -1', returnStatus: true) == 0 
+                        }
+                    }
+                    steps {
+                        script {
+                            echo "🔍 Running Python linting..."
+                            sh """
+                                . venv/bin/activate
+                                
+                                # Install linting tools
+                                pip install flake8 black isort pylint
+                                
+                                # Run flake8
+                                flake8 . --format=html --htmldir=flake8-report || true
+                                
+                                # Check code formatting
+                                black --check . || true
+                                
+                                # Check import sorting
+                                isort --check-only . || true
+                                
+                                # Run pylint
+                                pylint **/*.py --output-format=html > pylint-report.html || true
+                            """
+                        }
+                    }
+                    post {
+                        always {
+                            publishHTML([
+                                allowMissing: false,
+                                alwaysLinkToLastBuild: true,
+                                keepAll: true,
+                                reportDir: 'flake8-report',
+                                reportFiles: 'index.html',
+                                reportName: 'Flake8 Report'
+                            ])
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Stage 4: Security Scanning
+        stage('Security Scan') {
+            parallel {
+                stage('Dependency Audit') {
+                    steps {
+                        script {
+                            echo "🔒 Running dependency security audit..."
+                            
+                            // Node.js security audit
+                            if (fileExists('package.json')) {
+                                sh """
+                                    export NVM_DIR="\$HOME/.nvm"
+                                    [ -s "\$NVM_DIR/nvm.sh" ] && . "\$NVM_DIR/nvm.sh"
+                                    nvm use ${NODE_VERSION}
+                                    
+                                    npm audit --audit-level moderate --json > npm-audit.json || true
+                                """
+                            }
+                            
+                            // Python security audit
+                            if (fileExists('requirements.txt')) {
+                                sh """
+                                    . venv/bin/activate
+                                    pip install safety
+                                    safety check --json > safety-report.json || true
+                                """
+                            }
+                        }
+                    }
+                }
+                
+                stage('SAST Scan') {
+                    steps {
+                        script {
+                            echo "🔍 Running static application security testing..."
+                            sh """
+                                # Install and run Semgrep
+                                python3 -m pip install semgrep
+                                semgrep --config=auto --json --output=semgrep-report.json . || true
+                            """
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Stage 5: Testing
+        stage('Test') {
+            when {
+                not { params.SKIP_TESTS }
+            }
+            parallel {
+                stage('Unit Tests - Node.js') {
+                    when {
+                        expression { fileExists('package.json') }
+                    }
+                    steps {
+                        script {
+                            echo "🧪 Running Node.js unit tests..."
+                            sh """
+                                export NVM_DIR="\$HOME/.nvm"
+                                [ -s "\$NVM_DIR/nvm.sh" ] && . "\$NVM_DIR/nvm.sh"
+                                nvm use ${NODE_VERSION}
+                                
+                                # Run tests with coverage
+                                npm test -- --coverage --watchAll=false --ci
+                            """
+                        }
+                    }
+                    post {
+                        always {
+                            // Publish test results
+                            publishTestResults testResultsPattern: 'test-results.xml'
+                            
+                            // Publish coverage report
+                            publishHTML([
+                                allowMissing: false,
+                                alwaysLinkToLastBuild: true,
+                                keepAll: true,
+                                reportDir: 'coverage/lcov-report',
+                                reportFiles: 'index.html',
+                                reportName: 'Coverage Report'
+                            ])
+                        }
+                    }
+                }
+                
+                stage('Unit Tests - Python') {
+                    when {
+                        expression { 
+                            sh(script: 'find . -name "test_*.py" -o -name "*_test.py" | head -1', returnStatus: true) == 0 
+                        }
+                    }
+                    steps {
+                        script {
+                            echo "🧪 Running Python unit tests..."
+                            sh """
+                                . venv/bin/activate
+                                
+                                # Install testing tools
+                                pip install pytest pytest-cov pytest-html
+                                
+                                # Run tests with coverage
+                                pytest --cov=. --cov-report=html --cov-report=xml --html=pytest-report.html --junitxml=pytest-results.xml
+                            """
+                        }
+                    }
+                    post {
+                        always {
+                            // Publish test results
+                            publishTestResults testResultsPattern: 'pytest-results.xml'
+                            
+                            // Publish coverage report
+                            publishHTML([
+                                allowMissing: false,
+                                alwaysLinkToLastBuild: true,
+                                keepAll: true,
+                                reportDir: 'htmlcov',
+                                reportFiles: 'index.html',
+                                reportName: 'Python Coverage Report'
+                            ])
+                        }
+                    }
+                }
+                
+                stage('Integration Tests') {
+                    when {
+                        expression { fileExists('docker-compose.test.yml') }
+                    }
+                    steps {
+                        script {
+                            echo "🔗 Running integration tests..."
+                            sh """
+                                # Run integration tests with Docker Compose
+                                docker-compose -f docker-compose.test.yml up --build --abort-on-container-exit
+                            """
+                        }
+                    }
+                    post {
+                        always {
+                            sh 'docker-compose -f docker-compose.test.yml down || true'
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Stage 6: Build
+        stage('Build') {
+            parallel {
+                stage('Build Application') {
+                    when {
+                        expression { fileExists('package.json') }
+                    }
+                    steps {
+                        script {
+                            echo "🏗️ Building application..."
+                            sh """
+                                export NVM_DIR="\$HOME/.nvm"
+                                [ -s "\$NVM_DIR/nvm.sh" ] && . "\$NVM_DIR/nvm.sh"
+                                nvm use ${NODE_VERSION}
+                                
+                                # Build application
+                                npm run build
+                            """
+                        }
+                    }
+                    post {
+                        success {
+                            archiveArtifacts artifacts: 'dist/**/*', fingerprint: true
+                        }
+                    }
+                }
+                
+                stage('Build Docker Image') {
+                    when {
+                        expression { fileExists('Dockerfile') }
+                    }
+                    steps {
+                        script {
+                            echo "🐳 Building Docker image..."
+                            
+                            def imageName = "${DOCKER_REGISTRY}/${APP_NAME}:${env.GIT_COMMIT_SHORT}"
+                            def latestImage = "${DOCKER_REGISTRY}/${APP_NAME}:latest"
+                            
+                            sh """
+                                # Build Docker image
+                                docker build -t ${imageName} .
+                                docker tag ${imageName} ${latestImage}
+                                
+                                # Push to registry
+                                docker push ${imageName}
+                                docker push ${latestImage}
+                            """
+                            
+                            env.DOCKER_IMAGE = imageName
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Stage 7: Deploy
+        stage('Deploy') {
+            when {
+                anyOf {
+                    branch 'main'
+                    branch 'develop'
+                }
+            }
+            steps {
+                script {
+                    def targetEnv = (env.GIT_BRANCH_NAME == 'main') ? 'production' : 'staging'
+                    
+                    if (params.ENVIRONMENT) {
+                        targetEnv = params.ENVIRONMENT
+                    }
+                    
+                    echo "🚀 Deploying to ${targetEnv} environment..."
+                    
+                    // Deployment logic based on environment
+                    if (targetEnv == 'staging') {
+                        deployToStaging()
+                    } else if (targetEnv == 'production') {
+                        deployToProduction()
+                    }
+                }
+            }
+        }
+    }
+    
+    // Post-build actions
+    post {
+        always {
+            echo "🧹 Cleaning up workspace..."
+            cleanWs()
+        }
+        
+        success {
+            script {
+                echo "✅ Pipeline completed successfully!"
+                
+                // Send success notification
+                slackSend(
+                    channel: env.SLACK_CHANNEL,
+                    color: 'good',
+                    message: """
+                        ✅ *Build Success* - ${env.JOB_NAME}
+                        
+                        *Branch:* ${env.GIT_BRANCH_NAME}
+                        *Commit:* ${env.GIT_COMMIT_SHORT}
+                        *Build:* ${env.BUILD_NUMBER}
+                        *Duration:* ${currentBuild.durationString}
+                        
+                        <${env.BUILD_URL}|View Build>
+                    """
+                )
+            }
+        }
+        
+        failure {
+            script {
+                echo "❌ Pipeline failed!"
+                
+                // Send failure notification
+                slackSend(
+                    channel: env.SLACK_CHANNEL,
+                    color: 'danger',
+                    message: """
+                        ❌ *Build Failed* - ${env.JOB_NAME}
+                        
+                        *Branch:* ${env.GIT_BRANCH_NAME}
+                        *Commit:* ${env.GIT_COMMIT_SHORT}
+                        *Build:* ${env.BUILD_NUMBER}
+                        *Duration:* ${currentBuild.durationString}
+                        
+                        <${env.BUILD_URL}|View Build> | <${env.BUILD_URL}console|Console Output>
+                    """
+                )
+            }
+        }
+        
+        unstable {
+            script {
+                echo "⚠️ Pipeline completed with warnings!"
+                
+                slackSend(
+                    channel: env.SLACK_CHANNEL,
+                    color: 'warning',
+                    message: """
+                        ⚠️ *Build Unstable* - ${env.JOB_NAME}
+                        
+                        *Branch:* ${env.GIT_BRANCH_NAME}
+                        *Commit:* ${env.GIT_COMMIT_SHORT}
+                        *Build:* ${env.BUILD_NUMBER}
+                        
+                        <${env.BUILD_URL}|View Build>
+                    """
+                )
+            }
+        }
+    }
+}
+
+// Helper functions
+def deployToStaging() {
+    echo "🔄 Deploying to staging environment..."
+    
+    sh """
+        # Deploy to staging server
+        ssh -o StrictHostKeyChecking=no deploy@staging-server << 'EOF'
+            cd /var/www/staging
+            git pull origin develop
+            npm ci --production
+            npm run build
+            pm2 restart staging-app
+        EOF
+    """
+    
+    // Run smoke tests
+    sh """
+        sleep 30  # Wait for application to start
+        curl -f https://staging.example.com/health || exit 1
+    """
+    
+    echo "✅ Staging deployment completed successfully!"
+}
+
+def deployToProduction() {
+    echo "🚀 Deploying to production environment..."
+    
+    // Production deployment requires manual approval
+    timeout(time: 5, unit: 'MINUTES') {
+        input message: 'Deploy to production?', ok: 'Deploy',
+              submitterParameter: 'DEPLOYER'
+    }
+    
+    sh """
+        # Deploy to production server
+        ssh -o StrictHostKeyChecking=no deploy@production-server << 'EOF'
+            cd /var/www/production
+            git pull origin main
+            npm ci --production
+            npm run build
+            pm2 restart production-app
+        EOF
+    """
+    
+    // Run smoke tests
+    sh """
+        sleep 30  # Wait for application to start
+        curl -f https://example.com/health || exit 1
+    """
+    
+    echo "✅ Production deployment completed successfully!"
+    echo "🎉 Deployed by: ${env.DEPLOYER}"
+}

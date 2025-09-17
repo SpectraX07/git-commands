@@ -1,0 +1,356 @@
+# GitLab CI/CD Pipeline Template
+# Copy this to .gitlab-ci.yml in your repository root
+
+# Define stages for the pipeline
+stages:
+  - validate
+  - test
+  - security
+  - build
+  - deploy
+  - release
+
+# Global variables
+variables:
+  NODE_VERSION: "18"
+  PYTHON_VERSION: "3.9"
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: "/certs"
+
+# Cache configuration for faster builds
+cache:
+  paths:
+    - node_modules/
+    - .pip-cache/
+    - .cache/
+
+# Before script - runs before each job
+before_script:
+  - echo "Starting CI/CD pipeline for $CI_PROJECT_NAME"
+  - echo "Branch: $CI_COMMIT_REF_NAME"
+  - echo "Commit: $CI_COMMIT_SHA"
+
+# Stage 1: Validation
+validate:lint:
+  stage: validate
+  image: node:${NODE_VERSION}-alpine
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "develop"
+  before_script:
+    - npm ci --cache .npm --prefer-offline
+  script:
+    - echo "Running linting checks..."
+    - npm run lint
+    - npm run format:check
+  artifacts:
+    reports:
+      junit: lint-results.xml
+    expire_in: 1 week
+  only:
+    exists:
+      - package.json
+
+validate:python-lint:
+  stage: validate
+  image: python:${PYTHON_VERSION}-alpine
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "develop"
+  before_script:
+    - pip install --cache-dir .pip-cache flake8 black isort
+    - if [ -f requirements.txt ]; then pip install --cache-dir .pip-cache -r requirements.txt; fi
+  script:
+    - echo "Running Python linting..."
+    - flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+    - black --check .
+    - isort --check-only .
+  only:
+    exists:
+      - "**/*.py"
+
+# Stage 2: Testing
+test:unit:
+  stage: test
+  image: node:${NODE_VERSION}
+  parallel:
+    matrix:
+      - NODE_VERSION: ["16", "18", "20"]
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "develop"
+  before_script:
+    - npm ci --cache .npm --prefer-offline
+  script:
+    - echo "Running unit tests with Node.js $NODE_VERSION..."
+    - npm test
+    - npm run coverage
+  coverage: '/Lines\s*:\s*(\d+\.\d+)%/'
+  artifacts:
+    reports:
+      junit: test-results.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage/cobertura-coverage.xml
+    paths:
+      - coverage/
+    expire_in: 1 week
+  only:
+    exists:
+      - package.json
+
+test:python:
+  stage: test
+  image: python:${PYTHON_VERSION}
+  parallel:
+    matrix:
+      - PYTHON_VERSION: ["3.8", "3.9", "3.10", "3.11"]
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "develop"
+  before_script:
+    - pip install --cache-dir .pip-cache pytest pytest-cov
+    - if [ -f requirements.txt ]; then pip install --cache-dir .pip-cache -r requirements.txt; fi
+  script:
+    - echo "Running Python tests with Python $PYTHON_VERSION..."
+    - pytest --cov=. --cov-report=xml --cov-report=term --junitxml=pytest-report.xml
+  coverage: '/TOTAL.*\s+(\d+%)$/'
+  artifacts:
+    reports:
+      junit: pytest-report.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+    expire_in: 1 week
+  only:
+    exists:
+      - "**/*.py"
+
+test:integration:
+  stage: test
+  image: docker:latest
+  services:
+    - docker:dind
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "develop"
+  before_script:
+    - docker info
+  script:
+    - echo "Running integration tests..."
+    - docker-compose -f docker-compose.test.yml up --build --abort-on-container-exit
+    - docker-compose -f docker-compose.test.yml down
+  only:
+    exists:
+      - docker-compose.test.yml
+
+# Stage 3: Security Scanning
+security:sast:
+  stage: security
+  image: registry.gitlab.com/gitlab-org/security-products/analyzers/semgrep:latest
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "develop"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+    - echo "Running SAST security scan..."
+    - /analyzer run
+  artifacts:
+    reports:
+      sast: gl-sast-report.json
+    expire_in: 1 week
+
+security:dependency-scan:
+  stage: security
+  image: node:${NODE_VERSION}-alpine
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "develop"
+  before_script:
+    - npm ci --cache .npm --prefer-offline
+  script:
+    - echo "Running dependency security scan..."
+    - npm audit --audit-level moderate
+    - npx retire --outputformat json --outputpath retire-report.json || true
+  artifacts:
+    reports:
+      dependency_scanning: retire-report.json
+    expire_in: 1 week
+  allow_failure: true
+  only:
+    exists:
+      - package.json
+
+security:container-scan:
+  stage: security
+  image: docker:latest
+  services:
+    - docker:dind
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "develop"
+  before_script:
+    - docker info
+    - apk add --no-cache curl
+  script:
+    - echo "Building Docker image for security scan..."
+    - docker build -t $CI_PROJECT_NAME:$CI_COMMIT_SHA .
+    - echo "Running container security scan..."
+    - docker run --rm -v /var/run/docker.sock:/var/run/docker.sock 
+      -v $PWD:/tmp/.cache/ aquasec/trivy:latest 
+      image --format template --template "@contrib/sarif.tpl" 
+      -o /tmp/.cache/trivy-report.sarif $CI_PROJECT_NAME:$CI_COMMIT_SHA
+  artifacts:
+    reports:
+      container_scanning: trivy-report.sarif
+    expire_in: 1 week
+  only:
+    exists:
+      - Dockerfile
+
+# Stage 4: Build
+build:application:
+  stage: build
+  image: node:${NODE_VERSION}
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "develop"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  before_script:
+    - npm ci --cache .npm --prefer-offline
+  script:
+    - echo "Building application..."
+    - npm run build
+    - echo "Build completed successfully"
+  artifacts:
+    paths:
+      - dist/
+      - build/
+    expire_in: 1 week
+  only:
+    exists:
+      - package.json
+
+build:docker:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "develop"
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - echo "Building Docker image..."
+    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
+    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG .
+    - echo "Pushing Docker image..."
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
+    - if [ "$CI_COMMIT_BRANCH" == "main" ]; then
+        docker tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA $CI_REGISTRY_IMAGE:latest;
+        docker push $CI_REGISTRY_IMAGE:latest;
+      fi
+  only:
+    exists:
+      - Dockerfile
+
+# Stage 5: Deploy
+deploy:staging:
+  stage: deploy
+  image: alpine:latest
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop"
+  environment:
+    name: staging
+    url: https://staging.example.com
+  before_script:
+    - apk add --no-cache curl openssh-client
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - ssh-keyscan $STAGING_SERVER >> ~/.ssh/known_hosts
+    - chmod 644 ~/.ssh/known_hosts
+  script:
+    - echo "Deploying to staging environment..."
+    - ssh $STAGING_USER@$STAGING_SERVER "cd /var/www/staging && git pull origin develop"
+    - ssh $STAGING_USER@$STAGING_SERVER "cd /var/www/staging && npm ci && npm run build"
+    - ssh $STAGING_USER@$STAGING_SERVER "sudo systemctl restart staging-app"
+    - echo "Deployment to staging completed"
+  after_script:
+    - echo "Running smoke tests on staging..."
+    - curl -f https://staging.example.com/health || exit 1
+
+deploy:production:
+  stage: deploy
+  image: alpine:latest
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual
+  environment:
+    name: production
+    url: https://example.com
+  before_script:
+    - apk add --no-cache curl openssh-client
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - ssh-keyscan $PRODUCTION_SERVER >> ~/.ssh/known_hosts
+    - chmod 644 ~/.ssh/known_hosts
+  script:
+    - echo "Deploying to production environment..."
+    - ssh $PRODUCTION_USER@$PRODUCTION_SERVER "cd /var/www/production && git pull origin main"
+    - ssh $PRODUCTION_USER@$PRODUCTION_SERVER "cd /var/www/production && npm ci && npm run build"
+    - ssh $PRODUCTION_USER@$PRODUCTION_SERVER "sudo systemctl restart production-app"
+    - echo "Deployment to production completed"
+  after_script:
+    - echo "Running smoke tests on production..."
+    - curl -f https://example.com/health || exit 1
+    - echo "Sending deployment notification..."
+    - 'curl -X POST -H "Content-type: application/json" 
+      --data "{\"text\":\"🚀 Production deployment completed for $CI_PROJECT_NAME\"}" 
+      $SLACK_WEBHOOK_URL'
+
+# Stage 6: Release
+release:create:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - echo "Creating release for tag $CI_COMMIT_TAG"
+  release:
+    tag_name: $CI_COMMIT_TAG
+    name: 'Release $CI_COMMIT_TAG'
+    description: |
+      ## Changes in this release
+      
+      $(git log --pretty=format:"- %s" $(git describe --tags --abbrev=0 $CI_COMMIT_TAG^)..$CI_COMMIT_TAG)
+    assets:
+      links:
+        - name: 'Docker Image'
+          url: '$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG'
+        - name: 'Source Code'
+          url: '$CI_PROJECT_URL/-/archive/$CI_COMMIT_TAG/$CI_PROJECT_NAME-$CI_COMMIT_TAG.tar.gz'
+
+# Include additional pipeline configurations
+include:
+  - template: Security/SAST.gitlab-ci.yml
+  - template: Security/Dependency-Scanning.gitlab-ci.yml
+  - template: Security/Container-Scanning.gitlab-ci.yml
+  - template: Code-Quality.gitlab-ci.yml
+
+# Pipeline configuration
+workflow:
+  rules:
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG

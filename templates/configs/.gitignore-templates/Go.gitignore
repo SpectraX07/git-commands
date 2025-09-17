@@ -1,0 +1,134 @@
+# Go .gitignore template
+# Comprehensive ignore patterns for Go projects
+
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+
+# Build output
+/bin/
+/pkg/
+/dist/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Go module cache
+/go/pkg/mod/
+
+# Air (live reload)
+tmp/
+
+# Delve debugger
+__debug_bin
+
+# GoLand
+.idea/
+
+# VS Code
+.vscode/
+
+# Vim
+*.swp
+*.swo
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Log files
+*.log
+logs/
+
+# Configuration files (adjust as needed)
+config.json
+config.yaml
+config.yml
+*.conf
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary files
+*.tmp
+*.temp
+/tmp/
+
+# Coverage files
+coverage.txt
+coverage.html
+coverage.xml
+*.cover
+
+# Profiling files
+*.prof
+*.pprof
+
+# Documentation build
+/docs/_build/
+
+# Certificates and keys
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Docker
+Dockerfile.local
+docker-compose.override.yml
+
+# Kubernetes
+*.kubeconfig
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# Application specific
+data/
+uploads/
+storage/
