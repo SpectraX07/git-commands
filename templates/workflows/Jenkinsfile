@@ -1,4 +1,4 @@
-// Jenkins Pipeline Template
+    // Jenkins Pipeline Template
 // Copy this to Jenkinsfile in your repository root
 
 pipeline {
