@@ -5,6 +5,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Git Version](https://img.shields.io/badge/Git-2.40+-blue.svg)](https://git-scm.com/)
 [![Contributions Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![Complete Index](https://img.shields.io/badge/📚_Complete_Index-blue.svg)](INDEX.md)
+
 
 ## 🎯 What's Inside
 
