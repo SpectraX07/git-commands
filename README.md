@@ -45,7 +45,7 @@ This repository is your **complete Git solution** - everything you need to maste
 ### 1. **Complete Setup** (Recommended)
 ```bash
 # Clone this repository
-git clone https://github.com/yourusername/git-guide.git
+git clone https://github.com/SpectraX07/git-guide.git
 cd git-guide
 
 # Run the automated setup script
@@ -250,7 +250,7 @@ git add .
 ### **Option 1: Complete Setup (Recommended)**
 ```bash
 # Clone this repository
-git clone https://github.com/yourusername/git-guide.git
+git clone https://github.com/SpectraX07/git-guide.git
 cd git-guide
 
 # Run complete setup
@@ -347,7 +347,7 @@ cleanup.sh --auto
 
 ### **🏆 Contributors**
 This guide is made possible by amazing contributors:
-- [View all contributors](https://github.com/yourusername/git-guide/contributors)
+- [View all contributors](https://github.com/SpectraX07/git-guide/contributors)
 - [How to contribute](CONTRIBUTING.md)
 
 ### **📞 Support Channels**
@@ -359,10 +359,10 @@ This guide is made possible by amazing contributors:
 
 ## 📊 Project Stats
 
-![GitHub stars](https://img.shields.io/github/stars/yourusername/git-guide?style=social)
-![GitHub forks](https://img.shields.io/github/forks/yourusername/git-guide?style=social)
-![GitHub issues](https://img.shields.io/github/issues/yourusername/git-guide)
-![GitHub pull requests](https://img.shields.io/github/issues-pr/yourusername/git-guide)
+![GitHub stars](https://img.shields.io/github/stars/SpectraX07/git-guide?style=social)
+![GitHub forks](https://img.shields.io/github/forks/SpectraX07/git-guide?style=social)
+![GitHub issues](https://img.shields.io/github/issues/SpectraX07/git-guide)
+![GitHub pull requests](https://img.shields.io/github/issues-pr/SpectraX07/git-guide)
 
 ---
 
